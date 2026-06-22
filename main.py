@@ -7,26 +7,22 @@ from datetime import datetime
 # ===== تنظیمات =====
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
+SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
 SEEN_FILE = "seen_listings.json"
 
-# مشخصات خونه مورد نظر
-SEARCH_CONFIG = {
-    "location": "Lier, Belgium",
-    "radius_km": 10,
-    "min_price": 300000,
-    "max_price": 400000,
-    "min_bedrooms": 3,
-    "features": ["garden", "tuin"],
-}
-
-# سایت‌های جستجو
+# کوئری‌های جستجو
 SEARCH_QUERIES = [
-    'site:immoweb.be huis te koop Lier tuin 3 slaapkamers 300000 400000',
-    'site:immovlan.be woning kopen Lier tuin 3 slaapkamers',
-    'site:logic-immo.be maison vendre Lier jardin 3 chambres 300000 400000',
-    'site:era.be huis te koop Lier omgeving tuin slaapkamers',
-    'site:century21.be woning Lier tuin 3 slaapkamers te koop',
-    'huis te koop Lier omgeving 10km tuin 3 slaapkamers 300000 400000 euro',
+    "huis te koop Lier omgeving tuin 3 slaapkamers 300000 400000",
+    "woning kopen Lier 10km tuin 3 slaapkamers prijs 300000 400000",
+    "maison vendre Lier jardin 3 chambres 300000 400000 euro",
+    "immoweb huis Lier tuin 3 slaapkamers te koop",
+    "immovlan woning Lier omgeving tuin slaapkamers",
+]
+
+REAL_ESTATE_SITES = [
+    "immoweb", "immovlan", "logic-immo", "era.be",
+    "century21", "remax", "axan", "zimmo", "hebbes",
+    "vastgoed", "immo", "huis", "woning"
 ]
 
 
@@ -62,57 +58,47 @@ def send_telegram(message):
         print(f"❌ خطا در ارسال تلگرام: {e}")
 
 
-def search_google(query):
-    """جستجو با Google Custom Search API (رایگان تا ۱۰۰ درخواست در روز)"""
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    cx = os.environ.get("GOOGLE_CX")
-
-    if not api_key or not cx:
-        print("⚠️ Google API key یا CX تنظیم نشده")
-        return []
-
-    url = "https://www.googleapis.com/customsearch/v1"
+def search_serpapi(query):
+    url = "https://serpapi.com/search"
     params = {
-        "key": api_key,
-        "cx": cx,
+        "api_key": SERPAPI_KEY,
+        "engine": "google",
         "q": query,
-        "num": 10,
         "gl": "be",
         "hl": "nl",
+        "num": 10,
+        "location": "Belgium",
     }
-
     try:
-        r = requests.get(url, params=params, timeout=15)
+        r = requests.get(url, params=params, timeout=20)
         r.raise_for_status()
         data = r.json()
         results = []
-        for item in data.get("items", []):
+        for item in data.get("organic_results", []):
             results.append({
                 "title": item.get("title", ""),
                 "link": item.get("link", ""),
                 "snippet": item.get("snippet", ""),
             })
+        print(f"  ✅ {len(results)} نتیجه برای: {query[:40]}...")
         return results
     except Exception as e:
-        print(f"❌ خطا در جستجوی Google: {e}")
+        print(f"  ❌ خطا: {e}")
         return []
 
 
 def is_relevant(result):
-    """بررسی اینکه نتیجه مرتبطه یا نه"""
-    text = (result["title"] + " " + result["snippet"]).lower()
-
-    # باید از سایت‌های ملک باشه
-    real_estate_sites = ["immoweb", "immovlan", "logic-immo", "era.be", 
-                         "century21", "remax", "axan", "zimmo"]
     url = result["link"].lower()
-    if not any(site in url for site in real_estate_sites):
+    text = (result["title"] + " " + result["snippet"]).lower()
+    combined = url + " " + text
+
+    # باید از سایت‌های ملکی باشه
+    if not any(site in combined for site in REAL_ESTATE_SITES):
         return False
 
-    # باید کلمات مرتبط داشته باشه
-    keywords = ["koop", "vendre", "vente", "lier", "slaapkamer", "chambre", 
-                "tuin", "jardin", "woning", "huis", "maison"]
-    if not any(kw in text for kw in keywords):
+    # باید مرتبط با خرید باشه
+    buy_keywords = ["koop", "vendre", "vente", "verkoop", "te koop", "à vendre"]
+    if not any(kw in combined for kw in buy_keywords):
         return False
 
     return True
@@ -120,55 +106,63 @@ def is_relevant(result):
 
 def format_message(new_listings, total_found):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    
+
     if not new_listings:
         return (
             f"🏠 <b>جستجوی روزانه خونه - Lier</b>\n"
             f"📅 {now}\n\n"
-            f"✅ جستجو انجام شد — {total_found} نتیجه پیدا شد\n"
-            f"🔄 خبر جدیدی نیست (همه قبلاً دیده شدن)"
+            f"🔍 {total_found} نتیجه بررسی شد\n"
+            f"✅ خبر جدیدی نیست — همه قبلاً دیده شدن"
         )
 
     msg = (
-        f"🏠 <b>خونه‌های جدید پیدا شد! - Lier</b>\n"
+        f"🏠 <b>خونه‌های جدید پیدا شد!</b>\n"
         f"📅 {now}\n"
-        f"🆕 {len(new_listings)} آگهی جدید از {total_found} نتیجه\n\n"
+        f"🆕 {len(new_listings)} آگهی جدید\n\n"
         f"📋 <b>مشخصات جستجو:</b>\n"
-        f"📍 Lier + ۱۰ کیلومتر اطراف\n"
+        f"📍 Lier + ۱۰ کیلومتر\n"
         f"💶 ۳۰۰,۰۰۰ - ۴۰۰,۰۰۰ یورو\n"
-        f"🛏 ۳+ اتاق خواب | 🌿 حیاط\n\n"
-        f"━━━━━━━━━━━━━━━\n"
+        f"🛏 ۳+ اتاق | 🌿 حیاط\n\n"
+        f"{'━'*20}\n"
     )
 
-    for i, listing in enumerate(new_listings[:10], 1):
+    for i, listing in enumerate(new_listings[:8], 1):
+        title = listing['title'][:55]
+        snippet = listing['snippet'][:90]
         msg += (
-            f"\n{i}. <b>{listing['title'][:60]}</b>\n"
-            f"📝 {listing['snippet'][:100]}...\n"
+            f"\n{i}. <b>{title}</b>\n"
+            f"📝 {snippet}...\n"
             f"🔗 {listing['link']}\n"
-            f"━━━━━━━━━━━━━━━\n"
+            f"{'━'*20}\n"
         )
 
-    if len(new_listings) > 10:
-        msg += f"\n... و {len(new_listings) - 10} آگهی دیگه"
+    if len(new_listings) > 8:
+        msg += f"\n➕ {len(new_listings) - 8} آگهی دیگه هم هست"
 
     return msg
 
 
 def main():
     print(f"🔍 شروع جستجو - {datetime.now()}")
+
+    if not SERPAPI_KEY:
+        print("❌ SERPAPI_KEY تنظیم نشده!")
+        send_telegram("❌ خطا: SERPAPI_KEY تنظیم نشده!")
+        return
+
     seen = load_seen()
     all_results = []
 
     for query in SEARCH_QUERIES:
-        print(f"  جستجو: {query[:50]}...")
-        results = search_google(query)
+        results = search_serpapi(query)
         for r in results:
             if is_relevant(r):
                 all_results.append(r)
 
-    # حذف تکراری‌ها
-    unique = {r["link"]: r for r in all_results}.values()
-    total_found = len(list(unique))
+    # حذف تکراری‌ها بر اساس لینک
+    unique = list({r["link"]: r for r in all_results}.values())
+    total_found = len(unique)
+    print(f"📊 {total_found} نتیجه منحصربه‌فرد و مرتبط")
 
     # فیلتر جدیدها
     new_listings = []
@@ -179,15 +173,16 @@ def main():
             new_listings.append(r)
             new_hashes.append(h)
 
-    print(f"✅ {total_found} نتیجه یافت شد، {len(new_listings)} جدید")
+    print(f"🆕 {len(new_listings)} آگهی جدید")
 
-    # ارسال پیام
+    # ارسال پیام تلگرام
     message = format_message(new_listings, total_found)
     send_telegram(message)
 
     # ذخیره دیده‌شده‌ها
     seen.extend(new_hashes)
-    save_seen(seen[-500:])  # نگه‌داشتن آخرین ۵۰۰ تا
+    save_seen(seen[-500:])
+    print("✅ تمام شد!")
 
 
 if __name__ == "__main__":
