@@ -1,1 +1,37 @@
+name: Belgium House Finder
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+    - cron: '0 4,10,16,22 * * *'
+  workflow_dispatch:
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install packages
+        run: pip install requests
+
+      - name: Load cache
+        uses: actions/cache@v3
+        with:
+          path: seen_listings.json
+          key: seen-${{ github.run_id }}
+          restore-keys: seen-
+
+      - name: Run search
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+        run: python main.py
 
